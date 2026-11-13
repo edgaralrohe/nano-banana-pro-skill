@@ -287,6 +287,19 @@ async def run(args):
         print(f"Authentication failed ({type(e).__name__}): {e}", file=sys.stderr)
         sys.exit(2)
 
+    # When the cookies are rejected, gemini-webapi silently falls back to a signed-out guest
+    # session: init succeeds, but only the basic model is offered, no credits are reported and
+    # image requests answer "you may be signed out". Treat that as the auth failure it is.
+    status = getattr(client, "account_status", None)
+    if status is not None and getattr(status, "name", "AVAILABLE") != "AVAILABLE":
+        print(
+            f"Authentication failed: Google did not accept the cookies "
+            f"(account status {status.name}: {getattr(status, 'description', '')}). "
+            "Copy fresh __Secure-1PSID and __Secure-1PSIDTS values from gemini.google.com.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     model = args.model or DEFAULT_MODEL
     if args.quota:
         announce_quota(client, model, force=True)
@@ -311,6 +324,9 @@ async def run(args):
     except limit_error as e:
         print(f"LIMIT_REACHED {e}")
         sys.exit(4)
+    except ValueError as e:  # e.g. "Unknown model name: ... Available registered models: ..."
+        print(f"Model not available on this account: {e}", file=sys.stderr)
+        sys.exit(1)
 
     images = response.images
     if not images:
