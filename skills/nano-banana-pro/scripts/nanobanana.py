@@ -27,6 +27,7 @@ Exit codes: 0 ok, 1 no image / refused, 2 authentication, 3 missing dependency,
 """
 import argparse
 import asyncio
+import importlib
 import json
 import os
 import subprocess
@@ -144,6 +145,25 @@ def load_cookies(browser):
     sys.exit(2)
 
 
+def disable_library_browser_scan():
+    """Stop gemini-webapi from scanning every installed browser for cookies.
+
+    When browser-cookie3 is installed, the library reads the cookies of all local browsers
+    during init, even when we already pass cookies. On macOS that opens a Keychain prompt
+    ("Chrome Safe Storage"), and on a work machine the user may not be able to answer it.
+    We always hand the cookies over ourselves (env vars, cookies file, or the single browser
+    picked with --browser), so the library's scan is never needed.
+    """
+    # importlib, not "import ... as": gemini_webapi.utils re-exports a *function* named
+    # get_access_token, which shadows the submodule of the same name on attribute lookup.
+    try:
+        gat = importlib.import_module("gemini_webapi.utils.get_access_token")
+    except ImportError:
+        return
+    if hasattr(gat, "load_browser_cookies"):
+        gat.load_browser_cookies = lambda *args, **kwargs: {}
+
+
 # --------------------------------------------------------------------------- prompt
 def read_prompt_file(path):
     raw = Path(path).read_bytes()
@@ -259,6 +279,7 @@ async def run(args):
 
     harden_home()
     psid, psidts = load_cookies(args.browser)
+    disable_library_browser_scan()
     client = GeminiClient(psid, psidts)
     try:
         await client.init(timeout=90, auto_refresh=True)
